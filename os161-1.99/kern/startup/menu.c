@@ -290,6 +290,20 @@ cmd_quit(int nargs, char **args)
 }
 
 /*
+ * Command for enabling DB_THREADS debug logs.
+ */
+static
+int
+enable_db_threads_logs(int nargs, char **args)
+{
+	(void)nargs;
+	(void)args;
+
+    dbflags = 16;
+	return 0;
+}
+
+/*
  * Command for mounting a filesystem.
  */
 
@@ -506,6 +520,7 @@ static const char *mainmenu[] = {
 #endif
 	"[kh] Kernel heap stats              ",
 	"[q] Quit and shut down              ",
+	"[dth] Enable DB_THREADS logs        ",
 	NULL
 };
 
@@ -549,6 +564,7 @@ static struct {
 	{ "q",		cmd_quit },
 	{ "exit",	cmd_quit },
 	{ "halt",	cmd_quit },
+	{ "dth",	enable_db_threads_logs },
 
 #if OPT_SYNCHPROBS
 	/* in-kernel synchronization problem(s) */
