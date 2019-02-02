@@ -3,6 +3,7 @@
 #include <synchprobs.h>
 #include <synch.h>
 #include <opt-A1.h>
+#include <array.h>
 
 /* 
  * This simple default synchronization mechanism allows only vehicle at a time
@@ -22,41 +23,12 @@
  * replace this with declarations of any synchronization and other variables you need here
  */
 
-bool is_right_turn(Direction origin, Direction destination) {
-    if (origin == north) {
-        return destination == west;
-    } else if (origin == west) {
-        return destination == south;
-    } else if (origin == south) {
-        return destination == east;
-    } else if (origin == east) {
-        return destination == north;
-    } else {
-        panic("invalid origin and/or destination\n");
-        return false;
-    }
-}
-
-bool is_left_turn(Direction origin, Direction destination) {
-    if (origin == north) {
-        return destination == east;
-    } else if (origin == west) {
-        return destination == north;
-    } else if (origin == south) {
-        return destination == west;
-    } else if (origin == east) {
-        return destination == south;
-    } else {
-        panic("invalid origin and/or destination\n");
-        return false;
-    }
-}
-
-int n_counter, s_counter, w_counter, e_counter; // waiting to go to a destination
-int n_right_counter, s_right_counter, w_right_counter, e_right_counter; // waiting to go to a destination, turning right
-int n_left_counter, s_left_counter, w_left_counter, e_left_counter; // waiting to go to a destination, turning left
+int light;
+int cars; // number of cars before handing over
+int intersection_counter, n_counter, s_counter, w_counter, e_counter;
+struct array *q;
 struct lock *intersection_lock;
-struct cv *n, *nl, *nr, *s, *sl, *sr, *w, *wl, *wr, *e, *el, *er; // destination
+struct cv *n, *s, *w, *e;
 
 /* 
  * The simulation driver will call this function once before starting
@@ -68,45 +40,29 @@ struct cv *n, *nl, *nr, *s, *sl, *sr, *w, *wl, *wr, *e, *el, *er; // destination
 void
 intersection_sync_init(void)
 {
+    light = -1;
+    cars = 20;
+    intersection_counter = 0;
     n_counter = 0;
     s_counter = 0;
     w_counter = 0;
     e_counter = 0;
-    n_right_counter = 0;
-    s_right_counter = 0;
-    w_right_counter = 0;
-    e_right_counter = 0;
-    n_left_counter = 0;
-    s_left_counter = 0;
-    w_left_counter = 0;
-    e_left_counter = 0;
-    intersection_lock = lock_create("Intersection Lock");
-    n = cv_create("North");
-    nl = cv_create("North Left Turn");
-    nr = cv_create("North Right Turn");
-    s = cv_create("South");
-    sl = cv_create("South Left Turn");
-    sr = cv_create("South Right Turn");
-    w = cv_create("West");
-    wl = cv_create("West Left Turn");
-    wr = cv_create("West Right Turn");
-    e = cv_create("East");
-    el = cv_create("East Left Turn");
-    er = cv_create("East Right Turn");
 
+    q = array_create();
+    
+    intersection_lock = lock_create("Intersection Lock");
+
+    n = cv_create("North");
+    s = cv_create("South");
+    w = cv_create("West");
+    e = cv_create("East");
+
+    KASSERT(q != NULL);
     KASSERT(intersection_lock != NULL);
     KASSERT(n != NULL);
-    KASSERT(nl != NULL);
-    KASSERT(nr != NULL);
     KASSERT(s != NULL);
-    KASSERT(sl != NULL);
-    KASSERT(sr != NULL);
     KASSERT(w != NULL);
-    KASSERT(wl != NULL);
-    KASSERT(wr != NULL);
     KASSERT(e != NULL);
-    KASSERT(el != NULL);
-    KASSERT(er != NULL);
 }
 
 /* 
@@ -119,33 +75,19 @@ intersection_sync_init(void)
 void
 intersection_sync_cleanup(void)
 {
+    KASSERT(q != NULL);
     KASSERT(intersection_lock != NULL);
     KASSERT(n != NULL);
-    KASSERT(nl != NULL);
-    KASSERT(nr != NULL);
     KASSERT(s != NULL);
-    KASSERT(sl != NULL);
-    KASSERT(sr != NULL);
     KASSERT(w != NULL);
-    KASSERT(wl != NULL);
-    KASSERT(wr != NULL);
     KASSERT(e != NULL);
-    KASSERT(el != NULL);
-    KASSERT(er != NULL);
 
+    array_destroy(q);
     lock_destroy(intersection_lock);
     cv_destroy(n);
-    cv_destroy(nl);
-    cv_destroy(nr);
     cv_destroy(s);
-    cv_destroy(sl);
-    cv_destroy(sr);
     cv_destroy(w);
-    cv_destroy(wl);
-    cv_destroy(wr);
     cv_destroy(e);
-    cv_destroy(el);
-    cv_destroy(er);
 }
 
 
@@ -163,95 +105,69 @@ intersection_sync_cleanup(void)
  */
 
 void
-intersection_before_entry(Direction origin, Direction destination) 
-{
-    KASSERT(intersection_lock != NULL);
-    KASSERT(n != NULL);
-    KASSERT(nl != NULL);
-    KASSERT(nr != NULL);
-    KASSERT(s != NULL);
-    KASSERT(sl != NULL);
-    KASSERT(sr != NULL);
-    KASSERT(w != NULL);
-    KASSERT(wl != NULL);
-    KASSERT(wr != NULL);
-    KASSERT(e != NULL);
-    KASSERT(el != NULL);
-    KASSERT(er != NULL);
-
-    lock_acquire(intersection_lock);
-    if (destination == north) {
-        if (is_right_turn(origin, destination)) {
-            while(n_counter > 0 || n_left_counter > 0) {
-                cv_wait(nr, intersection_lock);
-            }
-            n_right_counter++;
-        } else if (is_left_turn(origin, destination)) {
-            while(w_counter > 0 || n_counter > 0 || s_counter > 0 || n_right_counter > 0 || w_left_counter > 0 || s_left_counter > 0 || e_left_counter > 0) {
-                cv_wait(nl, intersection_lock);
-            }
-            n_left_counter++;
-        } else {
-            while(w_counter > 0 || e_counter > 0 || n_right_counter > 0 || n_left_counter > 0 || s_left_counter > 0 || e_left_counter > 0) {
-                cv_wait(n, intersection_lock);
-            }
-            n_counter++;
-        }
-    } else if (destination == south) {
-        if (is_right_turn(origin, destination)) {
-            while(s_counter > 0 || s_left_counter > 0) {
-                cv_wait(sr, intersection_lock);
-            }
-            s_right_counter++;
-        } else if (is_left_turn(origin, destination)) {
-            while(e_counter > 0 || n_counter > 0 || s_counter > 0 || s_right_counter > 0 || w_left_counter > 0 || n_left_counter > 0 || e_left_counter > 0) {
-                cv_wait(sl, intersection_lock);
-            }
-            s_left_counter++;
-        } else {
-            while(w_counter > 0 || e_counter > 0 || s_right_counter > 0 || n_left_counter > 0 || s_left_counter > 0 || w_left_counter > 0) {
-                cv_wait(s, intersection_lock);
-            }
-            s_counter++;
-        }
-    } else if (destination == west) {
-       if (is_right_turn(origin, destination)) {
-            while(w_counter > 0 || w_left_counter > 0) {
-                cv_wait(wr, intersection_lock);
-            }
-            w_right_counter++;
-        } else if (is_left_turn(origin, destination)) {
-            while(e_counter > 0 || w_counter > 0 || s_counter > 0 || w_right_counter > 0 || e_left_counter > 0 || s_left_counter > 0 || n_left_counter > 0) {
-                cv_wait(wl, intersection_lock);
-            }
-            w_left_counter++;
-        } else {
-            while(n_counter > 0 || s_counter > 0 || w_right_counter > 0 || w_left_counter > 0 || n_left_counter > 0 || e_left_counter > 0) {
-                cv_wait(w, intersection_lock);
-            }
-            w_counter++;
-        }
-    } else if (destination == east) {
-       if (is_right_turn(origin, destination)) {
-            while(e_counter > 0 || e_left_counter > 0) {
-                cv_wait(er, intersection_lock);
-            }
-            e_right_counter++;
-        } else if (is_left_turn(origin, destination)) {
-            while(e_counter > 0 || w_counter > 0 || n_counter > 0 || e_right_counter > 0 || w_left_counter > 0 || s_left_counter > 0 || n_left_counter > 0) {
-                cv_wait(el, intersection_lock);
-            }
-            e_left_counter++;
-        } else {
-            while(n_counter > 0 || s_counter > 0 || e_right_counter > 0 || w_left_counter > 0 || s_left_counter > 0 || e_left_counter > 0) {
-                cv_wait(e, intersection_lock);
-            }
-            e_counter++;
-        }
+sleep_on_cv(Direction origin) {
+    if (origin == north) {
+        n_counter += 1;
+        cv_wait(n, intersection_lock);
+        n_counter -= 1;
+    } else if (origin == south) {
+        s_counter += 1;
+        cv_wait(s, intersection_lock);
+        s_counter -= 1;
+    } else if (origin == west) {
+        w_counter += 1;
+        cv_wait(w, intersection_lock);
+        w_counter -= 1;
+    } else if (origin == east) {
+        e_counter += 1;
+        cv_wait(e, intersection_lock);
+        e_counter -= 1;
     }
-    lock_release(intersection_lock);
 }
 
+void 
+place_in_queue(Direction origin) {
+    for (unsigned int i = 0; i < array_num(q); ++i) {
+        if (*(unsigned int *)array_get(q, i) == origin) {
+            return;
+        }
+    }
+    array_add(q, (void *)&origin, NULL);
+}
+
+    void
+intersection_before_entry(Direction origin, Direction destination) 
+{
+    KASSERT(q != NULL);
+    KASSERT(intersection_lock != NULL);
+    KASSERT(n != NULL);
+    KASSERT(s != NULL);
+    KASSERT(w != NULL);
+    KASSERT(e != NULL);
+
+    (void)destination;
+
+    lock_acquire(intersection_lock);
+    if (intersection_counter == 0 && (e_counter + n_counter + s_counter + w_counter <= 0)) {
+        light = origin;
+    }
+    cars -= 1;
+    if (light == (signed)origin) {
+        if (cars == 0) {
+            if (e_counter + n_counter + s_counter + w_counter > 0) {
+                place_in_queue(origin);
+                sleep_on_cv(origin);
+            } else {
+                cars = 20;
+            }
+        }
+    } else {
+        place_in_queue(origin);
+        sleep_on_cv(origin);
+    }
+    intersection_counter += 1;
+    lock_release(intersection_lock);
+}
 
 /*
  * The simulation driver will call this function each time a vehicle
@@ -267,137 +183,33 @@ intersection_before_entry(Direction origin, Direction destination)
 void
 intersection_after_exit(Direction origin, Direction destination) 
 {
+    KASSERT(q != NULL);
     KASSERT(intersection_lock != NULL);
     KASSERT(n != NULL);
-    KASSERT(nl != NULL);
-    KASSERT(nr != NULL);
     KASSERT(s != NULL);
-    KASSERT(sl != NULL);
-    KASSERT(sr != NULL);
     KASSERT(w != NULL);
-    KASSERT(wl != NULL);
-    KASSERT(wr != NULL);
     KASSERT(e != NULL);
-    KASSERT(el != NULL);
-    KASSERT(er != NULL);
+
+    (void)origin;
+    (void)destination;
 
     lock_acquire(intersection_lock);
-    if (destination == north) {
-        if (is_right_turn(origin, destination)) {
-            n_right_counter--;
-            if (n_right_counter <= 0) {
-                cv_broadcast(nl, intersection_lock);
-                cv_broadcast(n, intersection_lock);
-            }
-        } else if (is_left_turn(origin, destination)) {
-            n_left_counter--;
-            if (n_left_counter <= 0) {
-                cv_broadcast(nr, intersection_lock);
-                cv_broadcast(n, intersection_lock);
-                cv_broadcast(sl, intersection_lock);
-                cv_broadcast(s, intersection_lock);
-                cv_broadcast(wl, intersection_lock);
-                cv_broadcast(w, intersection_lock);
-                cv_broadcast(el, intersection_lock);
-            }
-        } else {
-            n_counter--;
-            if (n_counter <= 0) {
-                cv_broadcast(nr, intersection_lock);
-                cv_broadcast(nl, intersection_lock);
-                cv_broadcast(sl, intersection_lock);
-                cv_broadcast(w, intersection_lock);
-                cv_broadcast(e, intersection_lock);
-                cv_broadcast(el, intersection_lock);
-            }
+    intersection_counter -= 1;
+    if (intersection_counter == 0 && (e_counter + n_counter + s_counter + w_counter > 0)) {
+        if (array_num(q) > 0) {
+            light = *(int *)array_get(q, 0);
+            array_remove(q, 0);
         }
-    } else if (destination == south) {
-        if (is_right_turn(origin, destination)) {
-            s_right_counter--;
-            if (s_right_counter <= 0) {
-                cv_broadcast(sl, intersection_lock);
-                cv_broadcast(s, intersection_lock);
-            }
-        } else if (is_left_turn(origin, destination)) {
-            s_left_counter--;
-            if (s_left_counter <= 0) {
-                cv_broadcast(nl, intersection_lock);
-                cv_broadcast(n, intersection_lock);
-                cv_broadcast(sr, intersection_lock);
-                cv_broadcast(s, intersection_lock);
-                cv_broadcast(wl, intersection_lock);
-                cv_broadcast(e, intersection_lock);
-                cv_broadcast(el, intersection_lock);
-            }
-        } else {
-            s_counter--;
-            if (s_counter <= 0) {
-                cv_broadcast(nl, intersection_lock);
-                cv_broadcast(sr, intersection_lock);
-                cv_broadcast(sl, intersection_lock);
-                cv_broadcast(wl, intersection_lock);
-                cv_broadcast(w, intersection_lock);
-                cv_broadcast(e, intersection_lock);
-            }
+        if (light == north) {
+            cv_broadcast(n, intersection_lock);
+        } else if (light == south) {
+            cv_broadcast(s, intersection_lock);
+        } else if (light == west) {
+            cv_broadcast(w, intersection_lock);
+        } else if (light == east) {
+            cv_broadcast(e, intersection_lock);
         }
-    } else if (destination == west) {
-        if (is_right_turn(origin, destination)) {
-            w_right_counter--;
-            if (w_right_counter <= 0) {
-                cv_broadcast(wl, intersection_lock);
-                cv_broadcast(w, intersection_lock);
-            }
-        } else if (is_left_turn(origin, destination)) {
-            w_left_counter--;
-            if (w_left_counter <= 0) {
-                cv_broadcast(nl, intersection_lock);
-                cv_broadcast(s, intersection_lock);
-                cv_broadcast(sl, intersection_lock);
-                cv_broadcast(wr, intersection_lock);
-                cv_broadcast(w, intersection_lock);
-                cv_broadcast(e, intersection_lock);
-                cv_broadcast(el, intersection_lock);
-            }
-        } else {
-            w_counter--;
-            if (w_counter <= 0) {
-                cv_broadcast(nl, intersection_lock);
-                cv_broadcast(n, intersection_lock);
-                cv_broadcast(s, intersection_lock);
-                cv_broadcast(wr, intersection_lock);
-                cv_broadcast(wl, intersection_lock);
-                cv_broadcast(el, intersection_lock);
-            }
-        }
-    } else if (destination == east) {
-        if (is_right_turn(origin, destination)) {
-            e_right_counter--;
-            if (e_right_counter <= 0) {
-                cv_broadcast(el, intersection_lock);
-                cv_broadcast(e, intersection_lock);
-            }
-        } else if (is_left_turn(origin, destination)) {
-            e_left_counter--;
-            if (e_left_counter <= 0) {
-                cv_broadcast(nl, intersection_lock);
-                cv_broadcast(n, intersection_lock);
-                cv_broadcast(sl, intersection_lock);
-                cv_broadcast(wl, intersection_lock);
-                cv_broadcast(w, intersection_lock);
-                cv_broadcast(e, intersection_lock);
-                cv_broadcast(er, intersection_lock);
-            }
-        } else {
-            e_counter--;
-            if (e_counter <= 0) {
-                cv_broadcast(n, intersection_lock);
-                cv_broadcast(sl, intersection_lock);
-                cv_broadcast(s, intersection_lock);
-                cv_broadcast(wl, intersection_lock);
-                cv_broadcast(er, intersection_lock);
-                cv_broadcast(el, intersection_lock);
-            }
-        }
+        cars = 20;
     }
     lock_release(intersection_lock);
 }
