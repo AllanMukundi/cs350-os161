@@ -18,8 +18,8 @@ void intersection_sync_init(void);
 void intersection_sync_cleanup(void);
 void intersection_before_entry(Direction origin, Direction destination);
 void intersection_after_exit(Direction origin, Direction destination);
-bool is_right_turn(Direction origin, Direction destination);
-bool is_left_turn(Direction origin, Direction destination);
+void sleep_on_cv(Direction origin);
+void place_in_queue(Direction origin);
 
 /* student-implemented functions for the cat/mouse problem */
 

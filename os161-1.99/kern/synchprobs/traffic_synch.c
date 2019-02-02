@@ -135,7 +135,7 @@ place_in_queue(Direction origin) {
     array_add(q, (void *)&origin, NULL);
 }
 
-    void
+void
 intersection_before_entry(Direction origin, Direction destination) 
 {
     KASSERT(q != NULL);
