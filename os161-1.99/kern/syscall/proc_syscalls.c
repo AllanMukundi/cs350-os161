@@ -9,6 +9,9 @@
 #include <thread.h>
 #include <addrspace.h>
 #include <copyinout.h>
+#include <machine/trapframe.h>
+
+#include "opt-A2.h"
 
   /* this implementation of sys__exit does not do anything with the exit code */
   /* this needs to be fixed to get exit() and waitpid() working properly */
@@ -55,7 +58,11 @@ sys_getpid(pid_t *retval)
 {
   /* for now, this is just a stub that always returns a PID of 1 */
   /* you need to fix this to make it work properly */
+#if OPT_A2
+    *retval = curproc->pid;
+#else
   *retval = 1;
+#endif
   return(0);
 }
 
@@ -91,4 +98,50 @@ sys_waitpid(pid_t pid,
   *retval = pid;
   return(0);
 }
+
+#if OPT_A2
+int
+sys_fork(struct trapframe *tf, pid_t *retval) {
+    struct proc *new_proc = proc_create_runprogram("");
+    if (new_proc == NULL) {
+        return ENOMEM;
+    }
+    if (get_pid_counter() == 65) {
+        proc_destroy(new_proc);
+        return ENPROC;
+    }
+    // Copy address space
+    struct addrspace *new_addrspace;
+    int copy_addrspace = as_copy(curproc->p_addrspace, &new_addrspace);
+    if (copy_addrspace != 0) {
+        proc_destroy(new_proc);
+        return copy_addrspace;
+    }
+    if (new_addrspace == NULL) {
+        proc_destroy(new_proc);
+        return ENOMEM;
+    }
+    spinlock_acquire(&new_proc->p_lock);
+    new_proc->p_addrspace = new_addrspace;
+    spinlock_release(&new_proc->p_lock);
+    // Set parent-child relationship
+    new_proc->parent_pid = curproc->pid;
+    int add_child = array_add(curproc->children, (void *)new_proc, NULL);
+    if (add_child != 0) {
+        proc_destroy(new_proc);
+        return ENOMEM;
+    }
+    // Create thread for child process
+    struct trapframe *parent_tf;
+    *parent_tf = *tf;
+    int fork_thread = thread_fork(new_proc->p_name, new_proc, enter_forked_process, parent_tf, 0);
+    if (fork_thread != 0) {
+        kfree(parent_tf);
+        proc_destroy(new_proc);
+        return ENOMEM;
+    }
+    *retval = new_proc->pid;
+    return 0;
+}
+#endif
 

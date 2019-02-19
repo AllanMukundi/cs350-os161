@@ -51,6 +51,8 @@
 #include <synch.h>
 #include <kern/fcntl.h>  
 
+#include "opt-A2.h"
+
 /*
  * The process for the kernel; this holds all the kernel-only threads.
  */
@@ -69,7 +71,11 @@ static struct semaphore *proc_count_mutex;
 struct semaphore *no_proc_sem;   
 #endif  // UW
 
-
+#if OPT_A2
+int volatile pid_counter;
+struct lock *kernel_lock;
+struct array *proc_table;
+#endif
 
 /*
  * Create a proc structure.
@@ -208,6 +214,19 @@ proc_bootstrap(void)
     panic("could not create no_proc_sem semaphore\n");
   }
 #endif // UW 
+#if OPT_A2
+pid_counter = 1;
+kernel_lock = lock_create("Kernel Lock");
+proc_table = array_create();
+int set_array_size = array_setsize(proc_table, 64);
+if (set_array_size != 0) {
+    panic("could not create process table");
+}
+for(int i = 0; i < 64; ++i) {
+    array_set(proc_table, i, NULL);
+}
+#endif
+
 }
 
 /*
@@ -271,6 +290,16 @@ proc_create_runprogram(const char *name)
 	V(proc_count_mutex);
 #endif // UW
 
+#if OPT_A2
+	lock_acquire(kernel_lock);
+    array_set(proc_table, pid_counter-1, (void *)proc);
+    proc->pid = pid_counter++;
+	lock_release(kernel_lock);
+
+    proc->children = array_create();
+    proc->alive = true;
+    proc->parent_pid = 0;
+#endif    
 	return proc;
 }
 
@@ -364,3 +393,10 @@ curproc_setas(struct addrspace *newas)
 	spinlock_release(&proc->p_lock);
 	return oldas;
 }
+
+#if OPT_A2
+int
+get_pid_counter() {
+    return pid_counter;
+}
+#endif
