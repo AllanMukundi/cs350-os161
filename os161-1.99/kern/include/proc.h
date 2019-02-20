@@ -37,6 +37,7 @@
  */
 
 #include <spinlock.h>
+#include <synch.h>
 #include <thread.h> /* required for struct threadarray */
 
 #include "opt-A2.h"
@@ -76,6 +77,9 @@ struct proc {
     pid_t parent_pid;
     bool alive;
     struct array *children;
+    struct cv *proc_cv;
+    struct lock *proc_lock;
+    int exit_status;
 #endif
 };
 
@@ -110,7 +114,9 @@ struct addrspace *curproc_setas(struct addrspace *);
 
 #if OPT_A2
 /* Return next available pid */
-int get_pid_counter(void);
+void get_pid_counter(int *retval);
+bool is_proc_alive(pid_t pid);
+struct proc *get_proc_by_pid(pid_t pid);
 #endif
 
 
