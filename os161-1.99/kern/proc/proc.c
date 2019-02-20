@@ -178,11 +178,10 @@ proc_destroy(struct proc *proc)
 
     lock_acquire(proc->proc_lock);
     cv_signal(proc->proc_cv, proc->proc_lock);
-    lock_release(proc->proc_lock);
-
-    lock_acquire(kernel_lock);
-    for (unsigned int i = 0; i < array_num(proc->children); ++i) {
-        void *void_child = array_get(proc->children, i);
+    unsigned int num = array_num(proc->children);
+    for (unsigned int i = 0; i < num; ++i) {
+        void *void_child = array_get(proc->children, 0);
+        array_remove(proc->children, 0);
         struct proc *child = (struct proc *)void_child;
         if (child->alive) {
             child->parent_pid = 0;
@@ -193,12 +192,12 @@ proc_destroy(struct proc *proc)
         }
     }
     array_destroy(proc->children);
+    lock_release(proc->proc_lock);
     if (proc->parent_pid == 0) {
         cv_destroy(proc->proc_cv);
         lock_destroy(proc->proc_lock);
         kfree(proc);
     }
-    lock_release(kernel_lock);
 #endif
 
 #ifdef UW

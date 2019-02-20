@@ -48,7 +48,7 @@ void sys__exit(int exitcode) {
   /* if this is the last user process in the system, proc_destroy()
      will wake up the kernel menu thread */
   proc_destroy(p);
-  
+ 
   thread_exit();
   /* thread_exit() does not return, so we should never get here */
   panic("return from thread_exit in sys_exit\n");
@@ -159,7 +159,7 @@ sys_fork(struct trapframe *tf, pid_t *retval) {
         return ENOMEM;
     }
     // Create thread for child process
-    struct trapframe *parent_tf = kmalloc(sizeof(struct trapframe *));
+    struct trapframe *parent_tf = kmalloc(sizeof(struct trapframe));
     *parent_tf = *tf;
     int fork_thread = thread_fork(new_proc->p_name, new_proc, enter_forked_process, parent_tf, 0);
     if (fork_thread != 0) {
@@ -168,6 +168,7 @@ sys_fork(struct trapframe *tf, pid_t *retval) {
         return ENOMEM;
     }
     *retval = new_proc->pid;
+
     return 0;
 }
 #endif
