@@ -20,8 +20,7 @@
  * ARE DISCLAIMED.  IN NO EVENT SHALL THE UNIVERSITY OR CONTRIBUTORS BE LIABLE
  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
@@ -32,6 +31,7 @@
 #include <kern/syscall.h>
 #include <lib.h>
 #include <mips/trapframe.h>
+#include <machine/trapframe.h>
 #include <thread.h>
 #include <current.h>
 #include <syscall.h>
@@ -129,6 +129,11 @@ syscall(struct trapframe *tf)
 			    (int)tf->tf_a2,
 			    (pid_t *)&retval);
 	  break;
+#if OPT_A2
+	case SYS_fork:
+	  err = sys_fork(tf, (pid_t *)&retval);
+	  break;
+#endif
 #endif // UW
 
 	    /* Add stuff here */
@@ -177,7 +182,14 @@ syscall(struct trapframe *tf)
  * Thus, you can trash it and do things another way if you prefer.
  */
 void
-enter_forked_process(struct trapframe *tf)
+enter_forked_process(void *data1, unsigned long data2)
 {
-	(void)tf;
+    (void)data2;
+    struct trapframe stack_tf = *(struct trapframe *)data1;
+    kfree(data1);
+
+    stack_tf.tf_v0 = 0;
+    stack_tf.tf_a3 = 0;
+    stack_tf.tf_epc += 4;
+    mips_usermode(&stack_tf);
 }

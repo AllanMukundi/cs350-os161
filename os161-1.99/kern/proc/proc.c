@@ -51,6 +51,8 @@
 #include <synch.h>
 #include <kern/fcntl.h>  
 
+#include "opt-A2.h"
+
 /*
  * The process for the kernel; this holds all the kernel-only threads.
  */
@@ -69,7 +71,11 @@ static struct semaphore *proc_count_mutex;
 struct semaphore *no_proc_sem;   
 #endif  // UW
 
-
+#if OPT_A2
+int volatile pid_counter;
+struct lock *kernel_lock;
+struct array *proc_table;
+#endif
 
 /*
  * Create a proc structure.
@@ -136,7 +142,6 @@ proc_destroy(struct proc *proc)
 		proc->p_cwd = NULL;
 	}
 
-
 #ifndef UW  // in the UW version, space destruction occurs in sys_exit, not here
 	if (proc->p_addrspace) {
 		/*
@@ -167,7 +172,33 @@ proc_destroy(struct proc *proc)
 	spinlock_cleanup(&proc->p_lock);
 
 	kfree(proc->p_name);
-	kfree(proc);
+
+#if OPT_A2
+    proc->alive = false;
+
+    lock_acquire(proc->proc_lock);
+    cv_signal(proc->proc_cv, proc->proc_lock);
+    unsigned int num = array_num(proc->children);
+    for (unsigned int i = 0; i < num; ++i) {
+        void *void_child = array_get(proc->children, 0);
+        array_remove(proc->children, 0);
+        struct proc *child = (struct proc *)void_child;
+        if (child->alive) {
+            child->parent_pid = 0;
+        } else {
+            cv_destroy(child->proc_cv);
+            lock_destroy(child->proc_lock);
+            kfree(child);
+        }
+    }
+    array_destroy(proc->children);
+    lock_release(proc->proc_lock);
+    if (proc->parent_pid == 0) {
+        cv_destroy(proc->proc_cv);
+        lock_destroy(proc->proc_lock);
+        kfree(proc);
+    }
+#endif
 
 #ifdef UW
 	/* decrement the process count */
@@ -208,6 +239,18 @@ proc_bootstrap(void)
     panic("could not create no_proc_sem semaphore\n");
   }
 #endif // UW 
+#if OPT_A2
+pid_counter = 1;
+kernel_lock = lock_create("Kernel Lock");
+proc_table = array_create();
+int set_array_size = array_setsize(proc_table, 64);
+if (set_array_size != 0) {
+    panic("could not create process table");
+}
+for(int i = 0; i < 64; ++i) {
+    array_set(proc_table, i, NULL);
+}
+#endif
 }
 
 /*
@@ -271,6 +314,23 @@ proc_create_runprogram(const char *name)
 	V(proc_count_mutex);
 #endif // UW
 
+#if OPT_A2
+    spinlock_acquire(&proc->p_lock);
+	lock_acquire(kernel_lock);
+    array_set(proc_table, pid_counter-1, (void *)proc);
+    proc->pid = pid_counter++;
+	lock_release(kernel_lock);
+    spinlock_release(&proc->p_lock);
+
+    spinlock_acquire(&proc->p_lock);
+    proc->children = array_create();
+    proc->alive = true;
+    proc->parent_pid = 0;
+    proc->proc_cv = cv_create("Process CV");
+    proc->proc_lock = lock_create("Process Lock");
+
+    spinlock_release(&proc->p_lock);
+#endif    
 	return proc;
 }
 
@@ -364,3 +424,30 @@ curproc_setas(struct addrspace *newas)
 	spinlock_release(&proc->p_lock);
 	return oldas;
 }
+
+#if OPT_A2
+void
+get_pid_counter(int *pid_value) {
+    lock_acquire(kernel_lock);
+    *pid_value = pid_counter;
+    lock_release(kernel_lock);
+}
+
+bool
+is_proc_alive(pid_t pid) {
+    lock_acquire(kernel_lock);
+    void *proc_ptr = array_get(proc_table, pid-1);
+    lock_release(kernel_lock);
+    struct proc *proc = (struct proc *)proc_ptr;
+    KASSERT(proc != NULL);
+    return proc->alive;
+}
+
+struct proc *
+get_proc_by_pid(pid_t pid) {
+    lock_acquire(kernel_lock);
+    void *proc_ptr = array_get(proc_table, pid-1);
+    lock_release(kernel_lock);
+    return((struct proc *)proc_ptr);
+}
+#endif

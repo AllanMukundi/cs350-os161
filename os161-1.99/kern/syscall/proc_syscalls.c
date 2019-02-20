@@ -9,6 +9,9 @@
 #include <thread.h>
 #include <addrspace.h>
 #include <copyinout.h>
+#include <machine/trapframe.h>
+
+#include "opt-A2.h"
 
   /* this implementation of sys__exit does not do anything with the exit code */
   /* this needs to be fixed to get exit() and waitpid() working properly */
@@ -34,15 +37,18 @@ void sys__exit(int exitcode) {
    */
   as = curproc_setas(NULL);
   as_destroy(as);
+#if OPT_A2
+  p->exit_status = _MKWAIT_EXIT(exitcode);
+#endif
 
   /* detach this thread from its process */
   /* note: curproc cannot be used after this call */
-  proc_remthread(curthread);
 
+  proc_remthread(curthread);
   /* if this is the last user process in the system, proc_destroy()
      will wake up the kernel menu thread */
   proc_destroy(p);
-  
+ 
   thread_exit();
   /* thread_exit() does not return, so we should never get here */
   panic("return from thread_exit in sys_exit\n");
@@ -55,7 +61,11 @@ sys_getpid(pid_t *retval)
 {
   /* for now, this is just a stub that always returns a PID of 1 */
   /* you need to fix this to make it work properly */
+#if OPT_A2
+    *retval = curproc->pid;
+#else
   *retval = 1;
+#endif
   return(0);
 }
 
@@ -67,28 +77,99 @@ sys_waitpid(pid_t pid,
 	    int options,
 	    pid_t *retval)
 {
-  int exitstatus;
-  int result;
+    int exitstatus = 0;
+    int result;
 
-  /* this is just a stub implementation that always reports an
-     exit status of 0, regardless of the actual exit status of
-     the specified process.   
-     In fact, this will return 0 even if the specified process
-     is still running, and even if it never existed in the first place.
+    /* this is just a stub implementation that always reports an
+       exit status of 0, regardless of the actual exit status of
+       the specified process.   
+       In fact, this will return 0 even if the specified process
+       is still running, and even if it never existed in the first place.
 
-     Fix this!
-  */
+       Fix this!
+       */
 
-  if (options != 0) {
-    return(EINVAL);
-  }
-  /* for now, just pretend the exitstatus is 0 */
-  exitstatus = 0;
-  result = copyout((void *)&exitstatus,status,sizeof(int));
-  if (result) {
-    return(result);
-  }
-  *retval = pid;
-  return(0);
+    if (options != 0) {
+        return(EINVAL);
+    }
+
+    if (status == NULL) {
+        return EFAULT;
+    }
+
+    struct proc *candidate = get_proc_by_pid(pid);
+
+    if (candidate == NULL) { // does not exist
+        return ESRCH;
+    }
+
+    if (candidate->parent_pid != curproc->pid) {
+        return ECHILD;
+    }
+
+    lock_acquire(candidate->proc_lock);
+    if (is_proc_alive(pid)) {
+        cv_wait(candidate->proc_cv, candidate->proc_lock);
+    }
+    lock_release(candidate->proc_lock);
+
+    exitstatus = candidate->exit_status;
+
+    result = copyout((void *)&exitstatus,status,sizeof(int));
+    if (result) {
+        return(result);
+    }
+    *retval = pid;
+    return(0);
 }
+
+#if OPT_A2
+int
+sys_fork(struct trapframe *tf, pid_t *retval) {
+    struct proc *new_proc = proc_create_runprogram("");
+    if (new_proc == NULL) {
+        return ENOMEM;
+    }
+    int *retval_pid = kmalloc(sizeof(int*));
+    get_pid_counter(retval_pid);
+    if (*retval_pid == 65) {
+        proc_destroy(new_proc);
+        return ENPROC;
+    }
+    kfree(retval_pid);
+    // Copy address space
+    struct addrspace *new_addrspace;
+    int copy_addrspace = as_copy(curproc->p_addrspace, &new_addrspace);
+    if (copy_addrspace != 0) {
+        proc_destroy(new_proc);
+        return copy_addrspace;
+    }
+    if (new_addrspace == NULL) {
+        proc_destroy(new_proc);
+        return ENOMEM;
+    }
+    spinlock_acquire(&new_proc->p_lock);
+    new_proc->p_addrspace = new_addrspace;
+    spinlock_release(&new_proc->p_lock);
+    // Set parent-child relationship
+    new_proc->parent_pid = curproc->pid;
+    int add_child = array_add(curproc->children, (void *)new_proc, NULL);
+    if (add_child != 0) {
+        proc_destroy(new_proc);
+        return ENOMEM;
+    }
+    // Create thread for child process
+    struct trapframe *parent_tf = kmalloc(sizeof(struct trapframe));
+    *parent_tf = *tf;
+    int fork_thread = thread_fork(new_proc->p_name, new_proc, enter_forked_process, parent_tf, 0);
+    if (fork_thread != 0) {
+        kfree(parent_tf);
+        proc_destroy(new_proc);
+        return ENOMEM;
+    }
+    *retval = new_proc->pid;
+
+    return 0;
+}
+#endif
 
