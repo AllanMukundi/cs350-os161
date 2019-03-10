@@ -37,6 +37,9 @@
 #include <mips/tlb.h>
 #include <addrspace.h>
 #include <vm.h>
+#include <limits.h>
+#include <copyinout.h>
+#include <opt-A2.h>
 
 /*
  * Dumb MIPS-only "VM system" that is intended to only be just barely
@@ -343,11 +346,44 @@ as_complete_load(struct addrspace *as)
 }
 
 int
-as_define_stack(struct addrspace *as, vaddr_t *stackptr)
+as_define_stack(struct addrspace *as, vaddr_t *stackptr, int argc, char **argv)
 {
 	KASSERT(as->as_stackpbase != 0);
-
+    int result = 0;
+    size_t actual = 0;
+    
+#if OPT_A2
 	*stackptr = USERSTACK;
+    vaddr_t stackptr_t = *stackptr;
+
+    if (argv) {
+        // Copy to user stack
+        vaddr_t *addr_array = kmalloc(sizeof(vaddr_t) * argc);
+        if (addr_array == NULL) {
+            return ENOMEM;
+        }
+        addr_array[argc] = (vaddr_t)NULL;
+        for(int i = argc-1; i >= 0; --i) {
+            stackptr_t -= ROUNDUP(((strlen(argv[i])+1)*sizeof(char)), 4);
+            result = copyoutstr(argv[i], (userptr_t)stackptr_t, NAME_MAX+1, &actual);
+            if (result) {
+                kfree(addr_array);
+                return result;
+            }
+            addr_array[i] = stackptr_t;
+        }
+        for(int i = argc; i >= 0; --i) {
+            stackptr_t -= sizeof(vaddr_t);
+            result = copyout(&addr_array[i], (userptr_t)stackptr_t, sizeof(vaddr_t));
+            if (result) {
+                kfree(addr_array);
+                return result;
+            }
+        }
+    }
+    *stackptr -= ROUNDUP(USERSTACK-stackptr_t, 8);
+#endif
+
 	return 0;
 }
 

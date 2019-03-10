@@ -181,9 +181,24 @@ sys_execv(userptr_t program, userptr_t args) {
     struct addrspace *old_as;
     struct vnode *v;
     vaddr_t entrypoint, stackptr;
-    int result;
+    int result = 0;
+    int assigned = 0; // args in argv
+    char **arg_array = (char **)args;
 
-    (void)args;
+    /* Count args */
+    int argc = 0;
+    char *arg = arg_array[argc];
+    while(arg) {
+        argc += 1;
+        arg = arg_array[argc];
+    }
+
+    if (argc * 1024 > ARG_MAX) {
+        return E2BIG;
+    }
+    // for progname
+    argc += 1;
+
     /* Copy the program path into the kernel */
     char progname[PATH_MAX];
     size_t actual;
@@ -196,18 +211,69 @@ sys_execv(userptr_t program, userptr_t args) {
         return ENOENT;
     }
 
+    char **argv = kmalloc((argc+1)*sizeof(char *));
+    if (argv == NULL) {
+        return ENOMEM;
+    }
+   
+    argv[0] = (char *)kmalloc((actual)*sizeof(char));
+    if (argv[0] == NULL) {
+        kprintf("No memory to copy argv[0]\n");
+        kfree(argv);
+        return ENOMEM;
+    }
+    result = copyinstr((const_userptr_t)program, argv[0], NAME_MAX+1, &actual);
+    if (result) {
+        kprintf("Couldn't copyinstr the progname\n");
+        kfree(argv[0]);
+        kfree(argv);
+        return result;
+    }
+    assigned += 1;
+    for (int i = 1; i < argc; ++i) {
+        argv[i] = (char *)kmalloc((strlen(arg_array[i-1])+1)*sizeof(char));
+        if (argv[i] == NULL) {
+            kprintf("No memory to copy argv[%d]\n", i);
+            for (int j = 0; j < assigned; ++j) {
+                kfree(argv[j]);
+            }
+            kfree(argv);
+            return ENOMEM;
+        }
+        result = copyinstr((const_userptr_t)arg_array[i-1], argv[i], NAME_MAX+1, &actual);
+        if (result) {
+            kprintf("Couldn't copyinstr the arg to argv[%d]\n", i);
+            for (int j = 0; j < assigned; ++j) {
+                kfree(argv[j]);
+            }
+            kfree(argv);
+            return result;
+        }
+        assigned += 1;
+    }
+    argv[argc] = NULL;
+    assigned += 1;
+
    /* Open the file. */
     char *fname_temp;
     fname_temp = kstrdup(progname);
-    result = vfs_open(progname, O_RDONLY, 0, &v);
+    result = vfs_open(fname_temp, O_RDONLY, 0, &v);
     kfree(fname_temp);
     if (result) {
+        for (int j = 0; j < assigned; ++j) {
+            kfree(argv[j]);
+        }
+        kfree(argv);
         return result;
     }
 
     /* Create a new address space. */
     as = as_create();
-    if (as ==NULL) {
+    if (as == NULL) {
+        for (int j = 0; j < assigned; ++j) {
+            kfree(argv[j]);
+        }
+        kfree(argv);
         vfs_close(v);
         return ENOMEM;
     }
@@ -220,6 +286,10 @@ sys_execv(userptr_t program, userptr_t args) {
     /* Load the executable. */
     result = load_elf(v, &entrypoint);
     if (result) {
+        for (int j = 0; j < assigned; ++j) {
+            kfree(argv[j]);
+        }
+        kfree(argv);
         /* p_addrspace will go away when curproc is destroyed */
         vfs_close(v);
         return result;
@@ -229,18 +299,27 @@ sys_execv(userptr_t program, userptr_t args) {
     vfs_close(v);
 
     /* Define the user stack in the address space */
-    result = as_define_stack(as, &stackptr);
+    result = as_define_stack(as, &stackptr, argc, argv);
     if (result) {
+        for (int j = 0; j < assigned; ++j) {
+            kfree(argv[j]);
+        }
+        kfree(argv);
         /* p_addrspace will go away when curproc is destroyed */
         return result;
     }
-    
+
     // Destroy old addrspace
     as_destroy(old_as);
 
+    // Free memory
+    for (int j = 0; j < assigned; ++j) {
+        kfree(argv[j]);
+    }
+    kfree(argv);
+
     /* Warp to user mode. */
-    enter_new_process(0 /*argc*/, NULL /*userspace addr of argv*/,
-            stackptr, entrypoint);
+    enter_new_process(argc /*argc*/, (userptr_t)stackptr /*userspace addr of argv*/, stackptr, entrypoint);
 
     /* enter_new_process does not return. */
     panic("enter_new_process returned\n");
