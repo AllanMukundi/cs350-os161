@@ -218,13 +218,13 @@ sys_execv(userptr_t program, userptr_t args) {
    
     argv[0] = (char *)kmalloc((actual)*sizeof(char));
     if (argv[0] == NULL) {
-        kprintf("No memory to copy argv[0]\n");
+//        kprintf("No memory to copy argv[0]\n");
         kfree(argv);
         return ENOMEM;
     }
     result = copyinstr((const_userptr_t)program, argv[0], NAME_MAX+1, &actual);
     if (result) {
-        kprintf("Couldn't copyinstr the progname\n");
+//       kprintf("Couldn't copyinstr the progname\n");
         kfree(argv[0]);
         kfree(argv);
         return result;
@@ -233,7 +233,7 @@ sys_execv(userptr_t program, userptr_t args) {
     for (int i = 1; i < argc; ++i) {
         argv[i] = (char *)kmalloc((strlen(arg_array[i-1])+1)*sizeof(char));
         if (argv[i] == NULL) {
-            kprintf("No memory to copy argv[%d]\n", i);
+//            kprintf("No memory to copy argv[%d]\n", i);
             for (int j = 0; j < assigned; ++j) {
                 kfree(argv[j]);
             }
@@ -242,7 +242,7 @@ sys_execv(userptr_t program, userptr_t args) {
         }
         result = copyinstr((const_userptr_t)arg_array[i-1], argv[i], NAME_MAX+1, &actual);
         if (result) {
-            kprintf("Couldn't copyinstr the arg to argv[%d]\n", i);
+//            kprintf("Couldn't copyinstr the arg to argv[%d]\n", i);
             for (int j = 0; j < assigned; ++j) {
                 kfree(argv[j]);
             }
