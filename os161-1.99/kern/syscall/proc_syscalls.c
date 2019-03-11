@@ -319,7 +319,7 @@ sys_execv(userptr_t program, userptr_t args) {
     kfree(argv);
 
     /* Warp to user mode. */
-    enter_new_process(argc /*argc*/, (userptr_t)stackptr /*userspace addr of argv*/, stackptr, entrypoint);
+    enter_new_process(argc /*argc*/, (userptr_t)stackptr /*userspace addr of argv*/, USERSTACK-ROUNDUP(USERSTACK-stackptr, 8), entrypoint);
 
     /* enter_new_process does not return. */
     panic("enter_new_process returned\n");
