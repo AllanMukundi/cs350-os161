@@ -356,7 +356,7 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr, int argc, char **argv)
     vaddr_t stackptr_t = *stackptr;
     if (argv) {
         // Copy to user stack
-        vaddr_t *addr_array = kmalloc(sizeof(vaddr_t) * argc);
+        vaddr_t *addr_array = kmalloc(sizeof(vaddr_t) * (argc+1));
         if (addr_array == NULL) {
             return ENOMEM;
         }
@@ -378,6 +378,7 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr, int argc, char **argv)
                 return result;
             }
         }
+        kfree(addr_array);
     }
     *stackptr = stackptr_t;
 #endif
