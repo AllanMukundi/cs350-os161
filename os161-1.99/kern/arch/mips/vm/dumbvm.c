@@ -117,6 +117,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	uint32_t ehi, elo;
 	struct addrspace *as;
 	int spl;
+    bool is_text_segment = false;
 
 	faultaddress &= PAGE_FRAME;
 
@@ -125,7 +126,8 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	switch (faulttype) {
 	    case VM_FAULT_READONLY:
 		/* We always create pages read-write, so we can't get this */
-		panic("dumbvm: got VM_FAULT_READONLY\n");
+        //	panic("dumbvm: got VM_FAULT_READONLY\n");
+            return EFAULT;
 	    case VM_FAULT_READ:
 	    case VM_FAULT_WRITE:
 		break;
@@ -174,6 +176,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
 	if (faultaddress >= vbase1 && faultaddress < vtop1) {
 		paddr = (faultaddress - vbase1) + as->as_pbase1;
+        is_text_segment = true;
 	}
 	else if (faultaddress >= vbase2 && faultaddress < vtop2) {
 		paddr = (faultaddress - vbase2) + as->as_pbase2;
@@ -191,6 +194,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	/* Disable interrupts on this CPU while frobbing the TLB. */
 	spl = splhigh();
 
+
 	for (i=0; i<NUM_TLB; i++) {
 		tlb_read(&ehi, &elo, i);
 		if (elo & TLBLO_VALID) {
@@ -198,6 +202,9 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		}
 		ehi = faultaddress;
 		elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
+        if (as->elf_finished && is_text_segment) {
+            elo &= ~TLBLO_DIRTY;
+        }
 		DEBUG(DB_VM, "dumbvm: 0x%x -> 0x%x\n", faultaddress, paddr);
 		tlb_write(ehi, elo, i);
 		splx(spl);
@@ -206,6 +213,9 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 #if OPT_A3
     ehi = faultaddress;
     elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
+    if (as->elf_finished && is_text_segment) {
+        elo &= ~TLBLO_DIRTY;
+    }
     tlb_random(ehi, elo);
     splx(spl);
     return 0;
@@ -231,6 +241,7 @@ as_create(void)
 	as->as_pbase2 = 0;
 	as->as_npages2 = 0;
 	as->as_stackpbase = 0;
+    as->elf_finished = false;
 
 	return as;
 }
@@ -349,7 +360,8 @@ as_prepare_load(struct addrspace *as)
 int
 as_complete_load(struct addrspace *as)
 {
-	(void)as;
+    as->elf_finished = true;
+    as_activate();
 	return 0;
 }
 
