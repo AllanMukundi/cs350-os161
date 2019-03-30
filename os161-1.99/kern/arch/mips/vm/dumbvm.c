@@ -131,8 +131,8 @@ alloc_kpages(int npages)
 	pa = getppages(npages);
 	if (pa==0) {
 		return 0;
-	}
-	return PADDR_TO_KVADDR(pa);
+    }
+    return PADDR_TO_KVADDR(pa);
 }
 
 void 
@@ -142,10 +142,15 @@ free_kpages(vaddr_t addr)
     paddr_t translation = PADDR_TO_KVADDR(addr);
     int start_index = (translation - start) / PAGE_SIZE;
     int *start_here = coremap + start_index;
-    while (*start_here != 0) {
+    int expecting = *start_here;
+    while (*start_here == expecting) {
         *start_here = 0;
         start_here += 1;
+        expecting += 1;
     }
+//    for(int i = 0; i < num_frames; ++i) {
+//        kprintf("Key: %d, Value: %d\n", i, coremap[i]);
+//    }
     spinlock_release(&coremap_lock);
 }
 
@@ -304,6 +309,9 @@ as_create(void)
 void
 as_destroy(struct addrspace *as)
 {
+    kfree((void *)PADDR_TO_KVADDR(as->as_pbase1));
+    kfree((void *)PADDR_TO_KVADDR(as->as_pbase2));
+    kfree((void *)PADDR_TO_KVADDR(as->as_stackpbase));
 	kfree(as);
 }
 
