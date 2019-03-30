@@ -54,12 +54,11 @@
  * Wrap rma_stealmem in a spinlock.
  */
 static struct spinlock stealmem_lock = SPINLOCK_INITIALIZER;
-
-void
-vm_bootstrap(void)
-{
-	/* Do nothing. */
-}
+static struct spinlock coremap_lock = SPINLOCK_INITIALIZER;
+paddr_t start, end;
+bool coremap_initialized = false;
+int *coremap = NULL;
+int num_frames = 0;
 
 static
 paddr_t
@@ -69,10 +68,59 @@ getppages(unsigned long npages)
 
 	spinlock_acquire(&stealmem_lock);
 
-	addr = ram_stealmem(npages);
+    if (coremap_initialized) {
+        spinlock_acquire(&coremap_lock);
+        unsigned long section = 0;
+        int section_begin = -1;
+        for (int i = 0; i < num_frames; ++i) {
+            if (coremap[i] == 0) {
+                section += 1;
+            } else {
+                section = 0;
+            }
+            if (section == npages) {
+                section_begin = i-npages+1;
+                break;
+            }
+        }
+        if (section_begin == -1) {
+            kprintf("Cannot find a size %d contiguous segment\n", (int)npages);
+            return 0;
+        } else {
+            addr = start+(section_begin * PAGE_SIZE);
+            for(unsigned long i = 0; i < npages; ++i) {
+                coremap[section_begin+i] = i+1;
+            }
+        }
+        spinlock_release(&coremap_lock);
+    } else {
+        addr = ram_stealmem(npages);
+    }
 	
 	spinlock_release(&stealmem_lock);
 	return addr;
+}
+
+void
+vm_bootstrap(void)
+{
+    ram_getsize(&start, &end);
+
+    num_frames = (end-start)/PAGE_SIZE;
+    int coremap_size = num_frames * sizeof(int);
+    coremap = (int *)PADDR_TO_KVADDR(start);
+    int coremap_frames = (coremap_size + PAGE_SIZE - 1) / PAGE_SIZE;
+    num_frames -= coremap_frames;
+
+    start += coremap_frames * PAGE_SIZE;
+
+    spinlock_acquire(&coremap_lock);
+    for(int i = 0; i < num_frames; ++i) {
+        coremap[i] = 0;
+    }
+    spinlock_release(&coremap_lock);
+
+    coremap_initialized = true;
 }
 
 /* Allocate/free some kernel-space virtual pages */
@@ -90,10 +138,17 @@ alloc_kpages(int npages)
 void 
 free_kpages(vaddr_t addr)
 {
-	/* nothing - leak the memory. */
-
-	(void)addr;
+    spinlock_acquire(&coremap_lock);
+    paddr_t translation = PADDR_TO_KVADDR(addr);
+    int start_index = (translation - start) / PAGE_SIZE;
+    int *start_here = coremap + start_index;
+    while (*start_here != 0) {
+        *start_here = 0;
+        start_here += 1;
+    }
+    spinlock_release(&coremap_lock);
 }
+
 
 void
 vm_tlbshootdown_all(void)

@@ -120,6 +120,7 @@ kill_curthread(vaddr_t epc, unsigned code, vaddr_t vaddr)
        an unused variable */
 
     DEBUG(DB_SYSCALL,"Syscall: _exit in kill_curthread(%d)\n",sig);
+    kprintf("Killing curthread, are you writing to read-only memory?\n");
 
     KASSERT(curproc->p_addrspace != NULL);
     as_deactivate();
@@ -366,7 +367,6 @@ mips_trap(struct trapframe *tf)
 
 	cputhreads[curcpu->c_number] = (vaddr_t)curthread;
 	cpustacks[curcpu->c_number] = (vaddr_t)curthread->t_stack + STACK_SIZE;
-
 	/*
 	 * This assertion will fail if either
 	 *   (1) curthread->t_stack is corrupted, or
