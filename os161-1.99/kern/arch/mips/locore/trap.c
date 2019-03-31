@@ -39,6 +39,9 @@
 #include <vm.h>
 #include <mainbus.h>
 #include <syscall.h>
+#include <proc.h>
+#include <addrspace.h>
+#include <kern/wait.h>
 
 
 /* in exception.S */
@@ -73,48 +76,79 @@ static
 void
 kill_curthread(vaddr_t epc, unsigned code, vaddr_t vaddr)
 {
-	int sig = 0;
+    int sig = 0;
 
-	KASSERT(code < NTRAPCODES);
-	switch (code) {
-	    case EX_IRQ:
-	    case EX_IBE:
-	    case EX_DBE:
-	    case EX_SYS:
-		/* should not be seen */
-		KASSERT(0);
-		sig = SIGABRT;
-		break;
-	    case EX_MOD:
-	    case EX_TLBL:
-	    case EX_TLBS:
-		sig = SIGSEGV;
-		break;
-	    case EX_ADEL:
-	    case EX_ADES:
-		sig = SIGBUS;
-		break;
-	    case EX_BP:
-		sig = SIGTRAP;
-		break;
-	    case EX_RI:
-		sig = SIGILL;
-		break;
-	    case EX_CPU:
-		sig = SIGSEGV;
-		break;
-	    case EX_OVF:
-		sig = SIGFPE;
-		break;
-	}
+    KASSERT(code < NTRAPCODES);
+    switch (code) {
+        case EX_IRQ:
+        case EX_IBE:
+        case EX_DBE:
+        case EX_SYS:
+            /* should not be seen */
+            KASSERT(0);
+            sig = SIGABRT;
+            break;
+        case EX_MOD:
+        case EX_TLBL:
+        case EX_TLBS:
+            sig = SIGSEGV;
+            break;
+        case EX_ADEL:
+        case EX_ADES:
+            sig = SIGBUS;
+            break;
+        case EX_BP:
+            sig = SIGTRAP;
+            break;
+        case EX_RI:
+            sig = SIGILL;
+            break;
+        case EX_CPU:
+            sig = SIGSEGV;
+            break;
+        case EX_OVF:
+            sig = SIGFPE;
+            break;
+    }
 
-	/*
-	 * You will probably want to change this.
-	 */
+    /*
+     * You will probably want to change this.
+     */
+    struct addrspace *as;
+    struct proc *p = curproc;
+    /* for now, just include this to keep the compiler from complaining about
+       an unused variable */
 
-	kprintf("Fatal user mode trap %u sig %d (%s, epc 0x%x, vaddr 0x%x)\n",
-		code, sig, trapcodenames[code], epc, vaddr);
-	panic("I don't know how to handle this\n");
+    DEBUG(DB_SYSCALL,"Syscall: _exit in kill_curthread(%d)\n",sig);
+    kprintf("Killing curthread, are you writing to read-only memory?\n");
+
+    KASSERT(curproc->p_addrspace != NULL);
+    as_deactivate();
+    /*
+     * clear p_addrspace before calling as_destroy. Otherwise if
+     * as_destroy sleeps (which is quite possible) when we
+     * come back we'll be calling as_activate on a
+     * half-destroyed address space. This tends to be
+     * messily fatal.
+     */
+    as = curproc_setas(NULL);
+    as_destroy(as);
+
+    p->exit_status = _MKWAIT_STOP(sig);
+
+    /* detach this thread from its process */
+    /* note: curproc cannot be used after this call */
+
+    proc_remthread(curthread);
+    /* if this is the last user process in the system, proc_destroy()
+       will wake up the kernel menu thread */
+    proc_destroy(p);
+
+    thread_exit();
+    /* thread_exit() does not return, so we should never get here */
+    kprintf("Fatal user mode trap %u sig %d (%s, epc 0x%x, vaddr 0x%x)\n", code, sig, trapcodenames[code], epc, vaddr);
+    panic("I don't know how to handle this...\n");
+
 }
 
 /*
@@ -333,7 +367,6 @@ mips_trap(struct trapframe *tf)
 
 	cputhreads[curcpu->c_number] = (vaddr_t)curthread;
 	cpustacks[curcpu->c_number] = (vaddr_t)curthread->t_stack + STACK_SIZE;
-
 	/*
 	 * This assertion will fail if either
 	 *   (1) curthread->t_stack is corrupted, or
